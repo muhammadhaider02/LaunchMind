@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "agents"))
 from message_bus import get_history
 import ceo_agent
 import product_agent
+import engineer_agent
 
 def run_pipeline(idea: str):
     print("\n" + "=" * 60)
@@ -21,7 +22,7 @@ def run_pipeline(idea: str):
     ceo_result = ceo_agent.run(idea)
     task_message_id = ceo_result["task_message_id"]
 
-    # --- Step 2: Product agent picks up task and generates spec ---
+    # --- Step 2: Product agent generates spec ---
     product_spec = product_agent.run()
     if not product_spec:
         print("\n[MAIN] Product agent returned nothing. Aborting.")
@@ -37,15 +38,24 @@ def run_pipeline(idea: str):
         if not product_spec:
             print("\n[MAIN] Product agent returned nothing on revision. Aborting.")
             return
-        # Final accept — no further loops for now
         review_result = ceo_agent.review_and_proceed(product_spec, task_message_id)
+
+    final_spec = review_result
+    print("\n[MAIN] Product spec accepted. Handing off to Engineer agent...")
+
+    # --- Step 5: Engineer agent runs (parallel with Marketing — Marketing coming soon) ---
+    engineer_result = engineer_agent.run()
+    if not engineer_result:
+        print("\n[MAIN] Engineer agent returned nothing. Aborting.")
+        return
 
     # --- Done ---
     print("\n" + "=" * 60)
-    print("  CEO → PRODUCT PIPELINE COMPLETE")
+    print("  PIPELINE COMPLETE")
     print("=" * 60)
-    print("\n[MAIN] Final accepted product spec:")
-    print(json.dumps(review_result, indent=2))
+    print(f"\n  Repo:  {engineer_result['repo']}")
+    print(f"  PR:    {engineer_result['pr_url']}")
+    print(f"  Issue: {engineer_result['issue_url']}")
 
     print("\n[MAIN] Full message history:")
     history = get_history()
@@ -56,7 +66,6 @@ def run_pipeline(idea: str):
 
 
 if __name__ == "__main__":
-    # Pass startup idea as CLI arg or use default for testing
     idea = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else (
         "A platform where university students can list and buy second-hand textbooks"
     )
