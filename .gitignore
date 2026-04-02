@@ -10,4 +10,6 @@ wheels/
 .venv
 .env
 
+LaunchMind-Detailed.md
 LaunchMind.md
+logs.txt

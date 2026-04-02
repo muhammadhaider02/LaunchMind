@@ -38,7 +38,7 @@ def slugify(name: str) -> str:
     return name[:40]
 
 
-def generate_landing_page_and_name(spec: dict) -> dict:
+def generate_landing_page_and_name(spec: dict, feedback: str | None = None) -> dict:
     """
     Single LLM call — generates:
     - A short 2-word startup name
@@ -53,7 +53,7 @@ The landing page must include:
 - A compelling headline using the value proposition
 - A subheadline
 - A features section listing all features
-- A call-to-action button (e.g. 'Get Early Access')
+- A call-to-action button (e.g. 'Start Free Trial', 'See Demo')
 - Basic inline CSS — clean, modern, professional
 
 Respond ONLY with a valid JSON object:
@@ -63,6 +63,9 @@ Respond ONLY with a valid JSON object:
 }"""
 
     user_prompt = f"Product spec:\n{json.dumps(spec, indent=2)}"
+    if feedback:
+        user_prompt += f"\n\nRevision feedback from CEO: {feedback}\nAddress every point in the feedback."
+
     response = client.chat.completions.create(
         model="gpt-4.1",
         messages=[
@@ -112,33 +115,48 @@ def get_default_branch_sha() -> str:
 
 
 def create_branch(branch_name: str, sha: str) -> None:
-    """Create a new branch from the given SHA."""
+    """Create a new branch from the given SHA. Skip silently if already exists."""
     print(f"[Engineer] Creating branch: {branch_name}...")
     r = requests.post(
         f"https://api.github.com/repos/{GITHUB_STARTUPS_REPO}/git/refs",
         headers=GITHUB_HEADERS,
         json={"ref": f"refs/heads/{branch_name}", "sha": sha},
     )
+    if r.status_code == 422:
+        print(f"[Engineer] Branch {branch_name} already exists. Reusing it.")
+        return
     r.raise_for_status()
 
 
 def commit_file(branch_name: str, folder_name: str, html_content: str, startup_name: str) -> None:
-    """Commit index.html inside the startup's root folder."""
+    """Commit index.html — create or update if already exists on branch."""
     file_path = f"{folder_name}/index.html"
     print(f"[Engineer] Committing {file_path} to branch {branch_name}...")
     encoded = base64.b64encode(html_content.encode()).decode()
+
+    # Check if file already exists to get its SHA (required for updates)
+    existing = requests.get(
+        f"https://api.github.com/repos/{GITHUB_STARTUPS_REPO}/contents/{file_path}",
+        headers=GITHUB_HEADERS,
+        params={"ref": branch_name},
+    )
+    payload = {
+        "message": f"feat: add {startup_name} landing page",
+        "content": encoded,
+        "branch": branch_name,
+        "author": {
+            "name": "EngineerAgent",
+            "email": "agent@launchmind.ai",
+        },
+    }
+    if existing.status_code == 200:
+        payload["sha"] = existing.json()["sha"]
+        payload["message"] = f"fix: revise {startup_name} landing page per QA feedback"
+
     r = requests.put(
         f"https://api.github.com/repos/{GITHUB_STARTUPS_REPO}/contents/{file_path}",
         headers=GITHUB_HEADERS,
-        json={
-            "message": f"feat: add {startup_name} landing page",
-            "content": encoded,
-            "branch": branch_name,
-            "author": {
-                "name": "EngineerAgent",
-                "email": "agent@launchmind.ai",
-            },
-        },
+        json=payload,
     )
     r.raise_for_status()
     print(f"[Engineer] File committed.")
@@ -162,7 +180,7 @@ def create_issue(description: str, startup_name: str) -> str:
 
 
 def open_pull_request(branch_name: str, pr_title: str, pr_body: str) -> str:
-    """Open a pull request. Returns PR URL."""
+    """Open a pull request. Returns PR URL. If PR already exists, return existing URL."""
     print(f"[Engineer] Opening pull request...")
     r = requests.post(
         f"https://api.github.com/repos/{GITHUB_STARTUPS_REPO}/pulls",
@@ -174,6 +192,19 @@ def open_pull_request(branch_name: str, pr_title: str, pr_body: str) -> str:
             "base": "main",
         },
     )
+    if r.status_code == 422:
+        # PR already exists — fetch and return existing PR URL
+        print(f"[Engineer] PR already exists. Fetching existing PR URL...")
+        existing = requests.get(
+            f"https://api.github.com/repos/{GITHUB_STARTUPS_REPO}/pulls",
+            headers=GITHUB_HEADERS,
+            params={"head": f"{GITHUB_STARTUPS_REPO.split('/')[0]}:{branch_name}", "state": "open"},
+        )
+        if existing.status_code == 200 and existing.json():
+            url = existing.json()[0]["html_url"]
+            print(f"[Engineer] Existing PR: {url}")
+            return url
+
     r.raise_for_status()
     url = r.json()["html_url"]
     print(f"[Engineer] PR opened: {url}")
@@ -181,7 +212,7 @@ def open_pull_request(branch_name: str, pr_title: str, pr_body: str) -> str:
 
 
 def run() -> dict | None:
-    """Pick up product spec from inbox and execute all GitHub actions."""
+    """Pick up product spec or revision_request from inbox and execute all GitHub actions."""
     messages = get_messages("engineer")
     if not messages:
         print("[Engineer] No messages in inbox.")
@@ -189,11 +220,18 @@ def run() -> dict | None:
 
     msg = messages[-1]
     print(f"\n[Engineer] Received '{msg['message_type']}' from {msg['from_agent'].upper()}")
-    spec = msg["payload"]
+
+    # Handle both product spec and CEO revision requests
+    if msg["message_type"] == "revision_request":
+        spec = msg["payload"].get("spec", {})
+        feedback = msg["payload"].get("feedback", "")
+    else:
+        spec = msg["payload"]
+        feedback = None
 
     # --- Single LLM call: startup name + HTML ---
     print("[Engineer] Generating startup name and landing page...")
-    generated = generate_landing_page_and_name(spec)
+    generated = generate_landing_page_and_name(spec, feedback)
     startup_name = generated["startup_name"]
     html = generated["html"]
     folder_name = slugify(startup_name)
@@ -214,6 +252,8 @@ def run() -> dict | None:
     # --- Report back to CEO ---
     result = {
         "startup_name": startup_name,
+        "folder_name": folder_name,
+        "html": html,
         "repo": f"https://github.com/{GITHUB_STARTUPS_REPO}",
         "pr_url": pr_url,
         "issue_url": issue_url,

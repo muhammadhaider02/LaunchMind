@@ -9,4 +9,5 @@ dependencies = [
     "openai>=2.30.0",
     "python-dotenv>=1.2.2",
     "requests>=2.33.1",
+    "sendgrid>=6.12.5",
 ]

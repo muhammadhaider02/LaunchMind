@@ -71,6 +71,29 @@ Schema:
     return json.loads(call_llm(system_prompt, user_prompt))
 
 
+def review_qa_report(qa_report: dict) -> dict:
+    """LLM call #3 — reason about QA verdict and decide next action."""
+    system_prompt = """You are a CEO reviewing a QA report.
+The QA agent has already made the pass/fail decision. Your job is to respect it.
+
+Rules:
+- If both html_review and copy_review verdicts are 'pass', you MUST return verdict: 'accept'
+- Only return verdict: 'revise' if at least one verdict is 'fail'
+- Do not invent new issues beyond what QA flagged as failures
+- Minor suggestions from QA do not count as failures
+
+Respond ONLY with a valid JSON object:
+{
+  "verdict": "accept" or "revise",
+  "engineer_feedback": "<only if html_review verdict was fail, else empty string>",
+  "marketing_feedback": "<only if copy_review verdict was fail, else empty string>",
+  "reasoning": "<brief explanation>"
+}"""
+
+    user_prompt = f"QA Report:\n{json.dumps(qa_report, indent=2)}"
+    return json.loads(call_llm(system_prompt, user_prompt))
+
+
 def run(idea: str) -> dict:
     print(f"\n[CEO] Received idea: {idea}")
 
@@ -130,3 +153,80 @@ def review_and_proceed(product_output: dict, parent_id: str) -> dict:
     # Max retries hit — accept whatever we have and move on
     print("[CEO] Max retries reached. Accepting product spec as-is.")
     return product_output
+
+
+def send_qa_task(spec: dict, html: str, pr_url: str, folder_name: str, marketing_copy: dict) -> str:
+    """Send task to QA agent. Returns message_id."""
+    print("\n[CEO] Forwarding Engineer and Marketing output to QA agent...")
+    msg = send_message(
+        from_agent="ceo",
+        to_agent="qa",
+        message_type="task",
+        payload={
+            "spec": spec,
+            "html": html,
+            "pr_url": pr_url,
+            "folder_name": folder_name,
+            "marketing_copy": marketing_copy,
+        },
+    )
+    return msg["message_id"]
+
+
+def handle_qa_report(qa_report: dict, spec: dict, parent_id: str) -> dict:
+    """
+    LLM call #3 — reason about QA verdict.
+    Returns dict with verdict and any revision instructions.
+    """
+    print("\n[CEO] Reviewing QA report...")
+    decision = review_qa_report(qa_report)
+    print(f"[CEO] QA decision: {decision['verdict']}")
+    print(f"[CEO] Reasoning: {decision['reasoning']}")
+
+    if decision["verdict"] == "accept":
+        print("[CEO] QA output accepted. Forwarding PR link to Marketing.")
+        return {"verdict": "accept"}
+
+    # Build revision requests
+    result = {"verdict": "revise"}
+
+    if decision["engineer_feedback"]:
+        print(f"[CEO] Requesting Engineer revision: {decision['engineer_feedback']}")
+        send_message(
+            from_agent="ceo",
+            to_agent="engineer",
+            message_type="revision_request",
+            payload={
+                "feedback": decision["engineer_feedback"],
+                "spec": spec,
+            },
+            parent_message_id=parent_id,
+        )
+        result["engineer_feedback"] = decision["engineer_feedback"]
+
+    if decision["marketing_feedback"]:
+        print(f"[CEO] Requesting Marketing revision: {decision['marketing_feedback']}")
+        send_message(
+            from_agent="ceo",
+            to_agent="marketing",
+            message_type="revision_request",
+            payload={"feedback": decision["marketing_feedback"]},
+            parent_message_id=parent_id,
+        )
+        result["marketing_feedback"] = decision["marketing_feedback"]
+
+    return result
+
+
+def forward_pr_to_marketing(pr_url: str, startup_name: str) -> None:
+    """Forward PR URL to Marketing agent so it can post to Slack."""
+    print("\n[CEO] Forwarding PR link to Marketing agent...")
+    send_message(
+        from_agent="ceo",
+        to_agent="marketing",
+        message_type="task",
+        payload={
+            "pr_url": pr_url,
+            "startup_name": startup_name,
+        },
+    )
