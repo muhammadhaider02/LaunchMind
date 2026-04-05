@@ -1,8 +1,10 @@
 # LaunchMind
 
-A Multi-Agent System (MAS) that takes a startup idea as plain text and autonomously runs a full micro-startup launch — generating a product spec, building an HTML landing page, opening a real GitHub pull request, sending a cold outreach email via SendGrid, and posting to Slack. No human involvement after the idea is submitted.
+A Multi-Agent System (MAS) that takes a startup idea as plain text and autonomously runs a full micro-startup launch: generating a product spec, building a landing page, opening a real GitHub pull request, sending a cold outreach email via SendGrid, and posting to Slack. No human involvement after the idea is submitted.
 
-> **Example run:** Input: *"A tool that tracks your expenses and tells you where you're wasting money"* → Output: Named startup **SaasSweep**, complete product spec, HTML landing page committed to GitHub, PR opened, email sent, two Slack messages posted — fully autonomous.
+Generated startup landing pages are published to [LaunchMind-Startups](https://github.com/muhammadhaider02/LaunchMind-Startups).
+
+> **Example run:** Input: *"A tool that tracks your expenses and tells you where you're wasting money"* → Output: Named startup **SaasSweep**, complete product spec, landing page committed to GitHub, PR opened, email sent, two Slack messages posted. fully autonomous.
 
 ---
 
